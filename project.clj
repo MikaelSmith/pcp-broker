@@ -99,6 +99,7 @@
                                   [org.clojure/tools.namespace "0.2.4"]
                                   ;; Transitive dependency for lein-cloverage and puppetlabs/kitchensink
                                   [org.clojure/tools.cli "0.3.0"]]
+                   :jvm-opts ["-XX:+PrintGCDetails" "-XX:+PrintGCTimeStamps" "-XX:+PrintAdaptiveSizePolicy" "-Xloggc:./eng-resources/puppetserver_gc.log"]
                    :plugins [[lein-cloverage "1.0.6" :excludes [org.clojure/clojure org.clojure/tools.cli]]]}
              :integration {:test-paths ^:replace ["test/integration" "test/utils" "test-resources"]}
              :unit {:test-paths ^:replace ["test/unit" "test/utils" "test-resources"]}
