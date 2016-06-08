@@ -65,6 +65,12 @@
                                   [puppetlabs/kitchensink :classifier "test" :scope "test"]
                                   [puppetlabs/ssl-utils]
                                   [org.clojure/tools.namespace]]
+                   :jvm-opts [
+                   ;;           "-agentpath:/Applications/YourKit-Java-Profiler-2016.02.app/Contents/Resources/bin/mac/libyjpagent.jnilib"
+                   ;;           "-XX:+PrintGCDetails"
+                   ;;           "-XX:+PrintGCTimeStamps"
+                   ;;           "-XX:+PrintAdaptiveSizePolicy"
+                   ]
                    :plugins [[lein-cloverage "1.0.6" :excludes [org.clojure/clojure org.clojure/tools.cli]]]}
              :dev-schema-validation [:dev
                                      {:injections [(do
