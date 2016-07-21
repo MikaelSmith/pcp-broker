@@ -4,7 +4,7 @@
             [puppetlabs.pcp.broker.core :refer :all]
             [puppetlabs.pcp.broker.capsule :as capsule]
             [puppetlabs.pcp.broker.connection :as connection :refer [Codec]]
-            [puppetlabs.pcp.message :as message]
+            [puppetlabs.pcp.message-v2 :as message]
             [schema.core :as s]
             [schema.test :as st]
             [slingshot.test])

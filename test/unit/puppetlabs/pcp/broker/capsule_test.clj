@@ -1,7 +1,7 @@
 (ns puppetlabs.pcp.broker.capsule-test
   (:require [clojure.test :refer :all]
             [puppetlabs.pcp.broker.capsule :refer :all]
-            [puppetlabs.pcp.message :as message]
+            [puppetlabs.pcp.message-v2 :as message]
             [puppetlabs.pcp.testutils :refer [dotestseq]]
             [schema.core :as s]
             [schema.test :as st]

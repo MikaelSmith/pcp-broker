@@ -1,8 +1,8 @@
 (ns puppetlabs.pcp.broker.capsule
   (:require [clj-time.coerce :as time-coerce]
             [clj-time.core :as time]
-            [puppetlabs.pcp.message :as message :refer [Message]]
-            [puppetlabs.pcp.protocol :as p]
+            [puppetlabs.pcp.message-v2 :as message :refer [Message]]
+            [puppetlabs.pcp.protocol-v2 :as p]
             [puppetlabs.kitchensink.core :as ks]
             [schema.core :as s])
   (:import (org.joda.time DateTime)))
@@ -62,8 +62,8 @@
 
 (s/defn -expired? :- s/Bool
   "Check whether a message has expired or not"
-  [message :- Capsule]
-  (let [expires (:expires message)
+  [capsule :- Capsule]
+  (let [expires (:expires capsule)
         now     (time/now)]
     (time/after? now expires)))
 

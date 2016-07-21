@@ -8,8 +8,9 @@
             [puppetlabs.pcp.broker.capsule :as capsule]
             [puppetlabs.pcp.broker.connection :as connection :refer [Websocket Codec ConnectionState]]
             [puppetlabs.pcp.broker.metrics :as metrics]
-            [puppetlabs.pcp.message :as message :refer [Message]]
-            [puppetlabs.pcp.protocol :as p]
+            [puppetlabs.pcp.message-v2 :as message :refer [Message]]
+            [puppetlabs.pcp.message-v1 :as message-v1]
+            [puppetlabs.pcp.protocol-v2 :as p]
             [puppetlabs.kitchensink.core :as ks]
             [puppetlabs.metrics :refer [time!]]
             [puppetlabs.pcp.broker.borrowed.mq :as mq]
@@ -544,19 +545,17 @@
    :ssl-cert s/Str})
 
 (s/def default-codec :- Codec
-  {:decode message/decode
-   :encode message/encode})
+  {:decode (fn [bytes]
+             (message/decode bytes))
+   :encode (fn [message]
+             (message/encode message))})
 
 (s/def v1-codec :- Codec
   "Codec for handling v1.0 messages"
-  {:decode message/decode
+  {:decode (fn [bytes]
+             (message/v1->v2 (message-v1/decode bytes)))
    :encode (fn [message]
-             ;; strip in-reply-to for everything but inventory_response
-             (let [message_type (:message_type message)
-                   message (if (= "http://puppetlabs.com/inventory_response" message_type)
-                             message
-                             (dissoc message :in-reply-to))]
-               (message/encode message)))})
+             (message-v1/encode (message/v2->v1 message)))})
 
 (s/defn init :- Broker
   [options :- InitOptions]

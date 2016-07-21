@@ -1,7 +1,7 @@
 (ns puppetlabs.pcp.broker.connection
   (:require [puppetlabs.experimental.websockets.client :as websockets-client]
             [puppetlabs.kitchensink.core :as ks]
-            [puppetlabs.pcp.protocol :as p]
+            [puppetlabs.pcp.protocol-v2 :as p]
             [schema.core :as s]
             [slingshot.slingshot :refer [throw+ try+]])
   (:import (clojure.lang IFn)))

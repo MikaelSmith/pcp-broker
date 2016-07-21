@@ -5,8 +5,7 @@
             [me.raynes.fs :as fs]
             [puppetlabs.pcp.testutils :refer [dotestseq]]
             [puppetlabs.pcp.broker.service :refer [broker-service]]
-            [puppetlabs.pcp.testutils.client :as client]
-            [puppetlabs.pcp.message :as message]
+            [puppetlabs.pcp.testutils.client :as client :refer [func-vs]]
             [puppetlabs.kitchensink.core :as ks]
             [puppetlabs.trapperkeeper.services.authorization.authorization-service :refer [authorization-service]]
             [puppetlabs.trapperkeeper.services.metrics.metrics-service :refer [metrics-service]]
@@ -40,8 +39,8 @@
                :ssl-crl-path "./test-resources/ssl/ca/ca_crl.pem"}
 
    :web-router-service
-   {:puppetlabs.pcp.broker.service/broker-service {:v1 "/pcp/v1.0"
-                                                   :vNext "/pcp/vNext"}
+   {:puppetlabs.pcp.broker.service/broker-service {:v1 "/pcp/v1"
+                                                   :vNext "/pcp/v2"}
     :puppetlabs.trapperkeeper.services.status.status-service/status-service "/status"}
 
    :metrics {:enabled true
@@ -53,7 +52,7 @@
 
 (def protocol-versions
   "The short names of protocol versions"
-  ["v1.0" "vNext"])
+  ["v1" "v2"])
 
 (def broker-services
   "The trapperkeeper services the broker needs"
@@ -73,12 +72,20 @@
 ; checks globally by using the `schema.test/validate-schemas` fixture,
 ; especially on slower (or busy) hardware
 (use-fixtures :once (fn [fn-test]
-                      (let [message-set-expiry message/set-expiry]
-                        (with-redefs [message/set-expiry (fn
-                                                           ([message number unit]
-                                                            (message-set-expiry message (* 5 number) unit))
-                                                           ([message timestamp]
-                                                            (message-set-expiry message timestamp)))]
+                      (let [message-v1-set-expiry puppetlabs.pcp.message-v1/set-expiry
+                            message-v2-set-expiry puppetlabs.pcp.message-v2/set-expiry]
+                        (with-redefs [puppetlabs.pcp.message-v1/set-expiry
+                                      (fn
+                                        ([message number unit]
+                                         (message-v1-set-expiry message (* 5 number) unit))
+                                        ([message timestamp]
+                                         (message-v1-set-expiry message timestamp)))
+                                      puppetlabs.pcp.message-v2/set-expiry
+                                      (fn
+                                        ([message number unit]
+                                         (message-v2-set-expiry message (* 5 number) unit))
+                                        ([message timestamp]
+                                         (message-v2-set-expiry message timestamp)))]
                           (fn-test)))))
 (use-fixtures :each cleanup-spool-fixture)
 
@@ -87,7 +94,7 @@
     (let [connected (promise)]
       (with-open [client (client/http-client-with-cert "client01.example.com")
                   ws     (http/websocket client
-                                         "wss://127.0.0.1:8143/pcp/vNext"
+                                         "wss://127.0.0.1:8143/pcp/v2"
                                          :open (fn [ws] (deliver connected true)))]
         (is (= true (deref connected (* 2 1000) false)) "Connected within 2 seconds")))))
 
@@ -96,7 +103,7 @@
     (let [closed (promise)]
       (with-open [client (http/create-client)
                   ws (http/websocket client
-                                     "wss://127.0.0.1:8143/pcp/vNext"
+                                     "wss://127.0.0.1:8143/pcp/v2"
                                      :close (fn [ws code reason] (deliver closed code)))]
         ;; NOTE(richardc): This test should only check for close-code 4003, but it
         ;; is a little unreliable and so may sometimes yield the close-code 1006 due
@@ -120,7 +127,7 @@
     (try+
      (with-open [client (client/http-client-with-cert "client01.example.com")
                  ws (http/websocket client
-                                    "wss://127.0.0.1:8143/pcp/vNext"
+                                    "wss://127.0.0.1:8143/pcp/v2"
                                     :open (fn [ws] (deliver connected true))
                                     :close (fn [ws code reason]
                                              (deliver connected false)
@@ -193,7 +200,7 @@
         (let [response (client/recv! client)]
           (is (= "http://puppetlabs.com/error_message" (:message_type response)))
           (is (= nil (:in-reply-to response)))
-          (is (= "Could not decode message" (:description (message/get-json-data response)))))))))
+          (is (= "Could not decode message" (:description ((func-vs version 'get-json-data) response)))))))))
 
 (deftest certificate-must-match-test
   (with-app-with-config app broker-services broker-config
@@ -204,10 +211,10 @@
                                          :version version)]
         (let [response (client/recv! client)]
           (is (= "http://puppetlabs.com/error_message" (:message_type response)))
-          (if (= "v1.0" version)
+          (if (= "v1" version)
             (is (= nil (:in-reply-to response)))
             (is (:in-reply-to response)))
-          (is (= "Message not authorized" (:description (message/get-json-data response)))))))))
+          (is (= "Message not authorized" (:description ((func-vs version 'get-json-data) response)))))))))
 
 ;; Session association tests
 (deftest basic-session-association-test
@@ -220,7 +227,7 @@
   (with-app-with-config app broker-services broker-config
     (dotestseq [version protocol-versions]
       (with-open [client (client/connect :certname "client01.example.com"
-                                         :modify-association #(message/set-expiry % -1 :seconds)
+                                         :modify-association #((func-vs version 'set-expiry) % -1 :seconds)
                                          :check-association false
                                          :version version)]
         (let [response (client/recv! client)]
@@ -241,14 +248,14 @@
     (dotestseq [version protocol-versions]
       (with-open [client (client/connect :certname "client01.example.com"
                                          :version version)]
-        (let [request (client/make-association-request "pcp://client01.example.com/test")]
+        (let [request (client/make-association-request "pcp://client01.example.com/test" version)]
           (client/send! client request)
           (let [response (client/recv! client)]
             (is (= "http://puppetlabs.com/associate_response" (:message_type response)))
             (is (= {:success false
                     :reason "session already associated"
                     :id (:id request)}
-                   (message/get-json-data response))))
+                   ((func-vs version 'get-json-data) response))))
           (let [response (client/recv! client)]
             (is (= [4002 "association unsuccessful"] response))))))))
 
@@ -273,22 +280,24 @@
           (let [response (client/recv! client)]
             (is (= [4002 "association unsuccessful"] response))))
         (testing "cannot request inventory"
-          (let [request (-> (message/make-message)
+          (let [msg (partial func-vs version)
+                request (-> ((msg 'make-message))
                             (assoc :message_type "http://puppetlabs.com/inventory_request"
                                    :targets ["pcp:///server"]
                                    :sender "pcp://client01.example.com/test")
-                            (message/set-expiry 5 :seconds)
-                            (message/set-json-data {:query ["pcp://client01.example.com/test"]}))]
+                            ((msg 'set-expiry) 5 :seconds)
+                            ((msg 'set-json-data) {:query ["pcp://client01.example.com/test"]}))]
             (client/send! client request)
             (let [response (client/recv! client 1000)]
               (is (= nil response)))))
         (testing "cannot send messages"
-          (let [message (-> (message/make-message)
+          (let [msg (partial func-vs version)
+                message (-> ((msg 'make-message))
                             (assoc :sender "pcp://client01.example.com/test"
                                    :targets ["pcp://client01.example.com/test"]
                                    :message_type "greeting")
-                            (message/set-expiry 5 :seconds)
-                            (message/set-json-data "Hello"))]
+                            ((msg 'set-expiry) 5 :seconds)
+                            ((msg 'set-json-data) "Hello"))]
             (client/send! client message)
             (let [message (client/recv! client 1000)]
               (is (= nil message)))))))))
@@ -299,33 +308,35 @@
     (dotestseq [version protocol-versions]
       (with-open [client (client/connect :certname "client01.example.com"
                                          :version version)]
-        (let [request (-> (message/make-message)
+        (let [msg (partial func-vs version)
+              request (-> ((msg 'make-message))
                           (assoc :message_type "http://puppetlabs.com/inventory_request"
                                  :targets ["pcp:///server"]
                                  :sender "pcp://client01.example.com/test")
-                          (message/set-expiry 5 :seconds)
-                          (message/set-json-data {:query ["pcp://client01.example.com/test"]}))]
+                          ((msg 'set-expiry) 5 :seconds)
+                          ((msg 'set-json-data) {:query ["pcp://client01.example.com/test"]}))]
           (client/send! client request)
           (let [response (client/recv! client)]
             (is (= "http://puppetlabs.com/inventory_response" (:message_type response)))
             (is (= (:id request) (:in-reply-to response)))
-            (is (= {:uris ["pcp://client01.example.com/test"]} (message/get-json-data response)))))))))
+            (is (= {:uris ["pcp://client01.example.com/test"]} ((msg 'get-json-data) response)))))))))
 
 (deftest inventory-node-can-find-itself-wildcard-test
   (with-app-with-config app broker-services broker-config
     (dotestseq [version protocol-versions]
       (with-open [client (client/connect :certname "client01.example.com"
                                          :version version)]
-        (let [request (-> (message/make-message)
+        (let [msg (partial func-vs version)
+              request (-> ((msg 'make-message))
                           (assoc :message_type "http://puppetlabs.com/inventory_request"
                                  :targets ["pcp:///server"]
                                  :sender "pcp://client01.example.com/test")
-                          (message/set-expiry 5 :seconds)
-                          (message/set-json-data {:query ["pcp://*/test"]}))]
+                          ((msg 'set-expiry) 5 :seconds)
+                          ((msg 'set-json-data) {:query ["pcp://*/test"]}))]
           (client/send! client request)
           (let [response (client/recv! client)]
             (is (= "http://puppetlabs.com/inventory_response" (:message_type response)))
-            (is (= {:uris ["pcp://client01.example.com/test"]} (message/get-json-data response)))))))))
+            (is (= {:uris ["pcp://client01.example.com/test"]} ((msg 'get-json-data) response)))))))))
 
 (deftest inventory-node-cannot-find-previously-connected-node-test
   (with-app-with-config app broker-services broker-config
@@ -334,16 +345,17 @@
                                          :version version)])
       (with-open [client (client/connect :certname "client01.example.com"
                                          :version version)]
-        (let [request (-> (message/make-message)
+        (let [msg (partial func-vs version)
+              request (-> ((msg 'make-message))
                           (assoc :message_type "http://puppetlabs.com/inventory_request"
                                  :targets ["pcp:///server"]
                                  :sender "pcp://client01.example.com/test")
-                          (message/set-expiry 5 :seconds)
-                          (message/set-json-data {:query ["pcp://client02.example.com/test"]}))]
-          (client/send! client request))
-        (let [response (client/recv! client)]
-          (is (= "http://puppetlabs.com/inventory_response" (:message_type response)))
-          (is (= {:uris []} (message/get-json-data response))))))))
+                          ((msg 'set-expiry) 5 :seconds)
+                          ((msg 'set-json-data) {:query ["pcp://client02.example.com/test"]}))]
+          (client/send! client request)
+          (let [response (client/recv! client)]
+            (is (= "http://puppetlabs.com/inventory_response" (:message_type response)))
+            (is (= {:uris []} ((msg 'get-json-data) response)))))))))
 
 (def no-inventory-broker-config
   "A broker that allows connections but no inventory requests"
@@ -367,12 +379,13 @@
       (with-open [client (client/connect :certname "client01.example.com"
                                          :version version)]
         (testing "cannot request inventory"
-          (let [request (-> (message/make-message)
+          (let [msg (partial func-vs version)
+                request (-> ((msg 'make-message))
                             (assoc :message_type "http://puppetlabs.com/inventory_request"
                                    :targets ["pcp:///server"]
                                    :sender "pcp://client01.example.com/test")
-                            (message/set-expiry 5 :seconds)
-                            (message/set-json-data {:query ["pcp://client01.example.com/test"]}))]
+                            ((msg 'set-expiry) 5 :seconds)
+                            ((msg 'set-json-data) {:query ["pcp://client01.example.com/test"]}))]
             (client/send! client request)
             (let [response (client/recv! client 1000)]
               (is (= nil response)))))))))
@@ -383,32 +396,34 @@
     (dotestseq [version protocol-versions]
       (with-open [client (client/connect :certname "client01.example.com"
                                          :version version)]
-        (let [message (-> (message/make-message)
+        (let [msg (partial func-vs version)
+              message (-> ((msg 'make-message))
                           (assoc :sender "pcp://client01.example.com/test"
                                  :targets ["pcp://client01.example.com/test"]
                                  :message_type "greeting")
-                          (message/set-expiry 5 :seconds)
-                          (message/set-json-data "Hello"))]
+                          ((msg 'set-expiry) 5 :seconds)
+                          ((msg 'set-json-data) "Hello"))]
           (client/send! client message)
           (let [message (client/recv! client)]
             (is (= "greeting" (:message_type message)))
-            (is (= "Hello" (message/get-json-data message)))))))))
+            (is (= "Hello" ((msg 'get-json-data) message)))))))))
 
 (deftest send-to-self-wildcard-test
   (with-app-with-config app broker-services broker-config
     (dotestseq [version protocol-versions]
       (with-open [client (client/connect :certname "client01.example.com"
                                          :version version)]
-        (let [message (-> (message/make-message)
-                          (assoc :sender "pcp://client01.example.com/test"
-                                 :targets ["pcp://*/test"]
-                                 :message_type "greeting")
-                          (message/set-expiry 5 :seconds)
-                          (message/set-json-data "Hello"))]
+        (let [msg (partial func-vs version)
+              message (-> ((msg 'make-message))
+                      (assoc :sender "pcp://client01.example.com/test"
+                             :targets ["pcp://*/test"]
+                             :message_type "greeting")
+                      ((msg 'set-expiry) 5 :seconds)
+                      ((msg 'set-json-data) "Hello"))]
           (client/send! client message)
           (let [message (client/recv! client)]
             (is (= "greeting" (:message_type message)))
-            (is (= "Hello" (message/get-json-data message)))))))))
+            (is (= "Hello" ((msg 'get-json-data) message)))))))))
 
 (deftest send-with-destination-report-test
   (with-app-with-config app broker-services broker-config
@@ -417,38 +432,40 @@
                                            :version version)
                   receiver (client/connect :certname "client02.example.com"
                                            :version version)]
-        (let [message (-> (message/make-message)
+        (let [msg (partial func-vs version)
+              message (-> ((msg 'make-message))
                           (assoc :sender "pcp://client01.example.com/test"
                                  :targets ["pcp://client02.example.com/test"]
                                  :destination_report true
                                  :message_type "greeting")
-                          (message/set-expiry 5 :seconds)
-                          (message/set-json-data "Hello"))]
+                          ((msg 'set-expiry) 5 :seconds)
+                          ((msg 'set-json-data) "Hello"))]
           (client/send! sender message)
           (let [report  (client/recv! sender)
                 message (client/recv! receiver)]
             (is (= "http://puppetlabs.com/destination_report" (:message_type report)))
             (is (= (case version
-                     "v1.0" nil
+                     "v1" nil
                      (:id message))
                    (:in-reply-to report)))
             (is (= {:id (:id message)
                     :targets ["pcp://client02.example.com/test"]}
-                   (message/get-json-data report)))
+                   ((msg 'get-json-data) report)))
             (is (= "greeting" (:message_type message)))
-            (is (= "Hello" (message/get-json-data message)))))))))
+            (is (= "Hello" ((msg 'get-json-data) message)))))))))
 
 (deftest send-expired-wildcard-gets-no-expiry-test
   (with-app-with-config app broker-services broker-config
     (dotestseq [version protocol-versions]
       (with-open [client (client/connect :certname "client01.example.com"
                                          :version version)]
-        (let [message (-> (message/make-message)
+        (let [msg (partial func-vs version)
+              message (-> ((msg 'make-message))
                           (assoc :sender "pcp://client01.example.com/test"
                                  :targets ["pcp://client02.example.com/*"]
                                  :message_type "greeting")
-                          (message/set-expiry 5 :seconds)
-                          (message/set-json-data "Hello"))]
+                          ((msg 'set-expiry) 5 :seconds)
+                          ((msg 'set-json-data) "Hello"))]
           (client/send! client message)
           (let [response (client/recv! client 1000)]
             ;; Should get no message
@@ -459,10 +476,11 @@
     (dotestseq [version protocol-versions]
       (with-open [client (client/connect :certname "client01.example.com"
                                          :version version)]
-        (let [message (-> (message/make-message :sender "pcp://client01.example.com/test"
-                                                :targets ["pcp://client01.example.com/test"]
-                                                :message_type "greeting")
-                          (message/set-expiry -1 :seconds))]
+        (let [msg (partial func-vs version)
+              message (-> ((msg 'make-message) :sender "pcp://client01.example.com/test"
+                                               :targets ["pcp://client01.example.com/test"]
+                                               :message_type "greeting")
+                          ((msg 'set-expiry) -1 :seconds))]
           (client/send! client message)
           (let [response (client/recv! client)]
             (is (= "http://puppetlabs.com/ttl_expired" (:message_type response)))))))))
@@ -472,39 +490,42 @@
     (dotestseq [version protocol-versions]
       (with-open [client (client/connect :certname "client01.example.com"
                                          :version version)]
-        (let [message (-> (message/make-message)
+        (let [msg (partial func-vs version)
+              message (-> ((msg 'make-message))
                           (assoc :sender "pcp://client01.example.com/test"
                                  :targets ["pcp://client02.example.com/test"]
                                  :message_type "greeting")
-                          (message/set-expiry 5 :seconds)
-                          (message/set-json-data "Hello"))]
+                          ((msg 'set-expiry) 5 :seconds)
+                          ((msg 'set-json-data) "Hello"))]
           (client/send! client message)
           (let [response (client/recv! client)]
             (is (= "http://puppetlabs.com/ttl_expired" (:message_type response)))
             (is (= (case version
-                     "v1.0" nil
+                     "v1" nil
                      (:id message))
                    (:in-reply-to response)))
             ;; TODO(richardc): should we say for whom we expired,
             ;; in case we only expire for 1 of the expanded
             ;; destinations
-            (is (= {:id (:id message)} (message/get-json-data response)))))))))
+            (is (= {:id (:id message)} ((msg 'get-json-data) response)))))))))
 
 (deftest send-disconnect-connect-receive-test
   (with-app-with-config app broker-services broker-config
     (dotestseq [version protocol-versions]
       (with-open [client (client/connect :certname "client01.example.com"
                                          :version version)]
-        (let [message (-> (message/make-message)
+        (let [msg (partial func-vs version)
+              message (-> ((msg 'make-message))
                           (assoc :sender "pcp://client01.example.com/test"
                                  :targets ["pcp://client02.example.com/test"]
                                  :message_type "greeting")
-                          (message/set-expiry 5 :seconds)
-                          (message/set-json-data "Hello"))]
+                          ((msg 'set-expiry) 5 :seconds)
+                          ((msg 'set-json-data) "Hello"))]
           (client/send! client message)))
-      (with-open [client (client/connect :certname "client02.example.com")]
+      (with-open [client (client/connect :certname "client02.example.com"
+                                         :version version)]
         (let [message (client/recv! client)]
-          (is (= "Hello" (message/get-json-data message))))))))
+          (is (= "Hello" ((func-vs version 'get-json-data) message))))))))
 
 (def strict-broker-config
   "A broker that only allows test/sensitive message types from client01"
@@ -529,50 +550,54 @@
                   client02 (client/connect :certname "client02.example.com"
                                            :version version)]
         (testing "client01 -> client02 should work"
-          (let [message (-> (message/make-message :sender "pcp://client01.example.com/test"
-                                                  :message_type "test/sensitive"
-                                                  :targets ["pcp://client02.example.com/test"])
-                            (message/set-expiry 5 :seconds))]
+          (let [msg (partial func-vs version)
+                message (-> ((msg 'make-message) :sender "pcp://client01.example.com/test"
+                                                 :message_type "test/sensitive"
+                                                 :targets ["pcp://client02.example.com/test"])
+                            ((msg 'set-expiry) 5 :seconds))]
             (client/send! client01 message)
             (let [received (client/recv! client02)]
               (is (= (:id message) (:id received))))))
         (testing "client02 -> client01 should not work"
-          (let [message (-> (message/make-message :sender "pcp://client02.example.com/test"
-                                                  :message_type "test/sensitive"
-                                                  :targets ["pcp://client01.example.com/test"])
-                            (message/set-expiry 5 :seconds))]
+          (let [msg (partial func-vs version)
+                message (-> ((msg 'make-message) :sender "pcp://client02.example.com/test"
+                                                 :message_type "test/sensitive"
+                                                 :targets ["pcp://client01.example.com/test"])
+                            ((msg 'set-expiry) 5 :seconds))]
             (client/send! client02 message)
             (let [received (client/recv! client01 1000)]
               (is (= nil received)))))))))
 
 (deftest interversion-send-test
   (with-app-with-config app broker-services broker-config
-    (dotestseq [sender-version   ["v1.0" "vNext" "v1.0" "vNext"]
-                receiver-version ["v1.0" "v1.0" "vNext" "vNext"]]
+    (dotestseq [sender-version   ["v1" "v2" "v1" "v2"]
+                receiver-version ["v1" "v1" "v2" "v2"]]
       (with-open [sender   (client/connect :certname "client01.example.com"
                                            :version sender-version)
                   receiver (client/connect :certname "client02.example.com"
                                            :version receiver-version)]
-        (let [message (-> (message/make-message)
+        (let [sender-msg (partial func-vs sender-version)
+              receiver-msg (partial func-vs receiver-version)
+              message (-> ((sender-msg 'make-message))
                           (assoc :sender "pcp://client01.example.com/test"
                                  :targets ["pcp://client02.example.com/test"]
                                  :in-reply-to (ks/uuid)
                                  :message_type "greeting")
-                          (message/set-expiry 5 :seconds)
-                          (message/set-json-data "Hello"))]
+                          ((sender-msg 'set-expiry) 5 :seconds)
+                          ((sender-msg 'set-json-data) "Hello"))]
           (client/send! sender message)
           (let [received-msg (client/recv! receiver)]
             (is (= (case receiver-version
-                     "v1.0" nil
+                     "v1" nil
                      (:in-reply-to message))
                    (:in-reply-to received-msg)))
             (is (= "greeting" (:message_type received-msg)))
-            (is (= "Hello" (message/get-json-data received-msg)))))))))
+            (is (= "Hello" ((receiver-msg 'get-json-data) received-msg)))))))))
 
 (def no-vnext-config
-  "A broker with vNext unconfigured"
+  "A broker with v2 unconfigured"
   (assoc-in broker-config [:web-router-service :puppetlabs.pcp.broker.service/broker-service]
-            {:v1 "/pcp/v1.0"}))
+            {:v1 "/pcp/v1"}))
 
 (deftest no-vnext-test
   (with-app-with-config app broker-services no-vnext-config

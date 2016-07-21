@@ -3,8 +3,14 @@
             [clojure.core.async :as async :refer [timeout alts!! chan >!! <!!]]
             [http.async.client :as http]
             [puppetlabs.kitchensink.core :as ks]
-            [puppetlabs.pcp.message :as message]
+            [puppetlabs.pcp.message-v1]
+            [puppetlabs.pcp.message-v2]
             [puppetlabs.ssl-utils.core :as ssl-utils]))
+
+(defn func-vs
+  "Resolve a version-specific implementation of the named pcp.message function"
+  [version function-name]
+  (ns-resolve (symbol (str "puppetlabs.pcp.message-" version)) function-name))
 
 ;; A simple websockets client with some assertions - for non-testing uses use pcp-client.
 
@@ -15,7 +21,7 @@
   (recv! [_] [_ timeout]
     "Returns nil on timeout, [code reason] on close, message/Message on message"))
 
-(defrecord ChanClient [http-client ws-client message-channel]
+(defrecord ChanClient [http-client ws-client message-channel version]
   WsClient
   (close [_]
     (async/close! message-channel)
@@ -24,7 +30,7 @@
   (sendbytes! [_ bytes]
     (http/send ws-client :byte bytes))
   (send! [_ message]
-    (http/send ws-client :byte (message/encode message)))
+    (http/send ws-client :byte ((func-vs version 'encode) message)))
   (recv! [this] (recv! this (* 10 5 1000)))
   (recv! [_ timeout-ms]
     (let [[message channel] (alts!! [message-channel (timeout timeout-ms)])]
@@ -39,39 +45,39 @@
     (http/create-client :ssl-context ssl-context)))
 
 (defn make-association-request
-  [uri]
-  (-> (message/make-message)
+  [uri version]
+  (-> ((func-vs version 'make-message))
       (assoc :message_type "http://puppetlabs.com/associate_request"
              :targets ["pcp:///server"]
              :sender uri)
-      (message/set-expiry 5 :seconds)))
+      ((func-vs version 'set-expiry) 5 :seconds)))
 
 (defn connect
   "Makes a client for testing"
   [& {:keys [certname uri version modify-association check-association]
       :or {modify-association identity
            check-association true
-           version "vNext"}}]
+           version "v2"}}]
   (let [uri                 (or uri (str "pcp://" certname "/test"))
-        association-request (modify-association (make-association-request uri))
+        association-request (modify-association (make-association-request uri version))
         client              (http-client-with-cert certname)
         message-chan        (chan)
         ws                  (http/websocket client (str "wss://127.0.0.1:8143/pcp/" version)
                                             :open  (fn [ws]
-                                                     (http/send ws :byte (message/encode association-request)))
+                                                     (http/send ws :byte ((func-vs version 'encode) association-request)))
                                             :byte  (fn [ws msg]
-                                                     (>!! message-chan (message/decode msg)))
+                                                     (>!! message-chan ((func-vs version 'decode) msg)))
                                             :close (fn [ws code reason]
                                                      (>!! message-chan [code reason])))
-        wrapper             (ChanClient. client ws message-chan)]
+        wrapper             (ChanClient. client ws message-chan version)]
     (if check-association
       (let [response (recv! wrapper)]
         (is (= "http://puppetlabs.com/associate_response" (:message_type response)))
         (is (= (case version
-                 "v1.0" nil
+                 "v1" nil
                  (:id association-request))
                (:in-reply-to response)))
         (is (= {:id (:id association-request)
                 :success true}
-               (message/get-json-data response)))))
+               ((func-vs version 'get-json-data) response)))))
     wrapper))

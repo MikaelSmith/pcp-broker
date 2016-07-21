@@ -1,6 +1,6 @@
 (ns puppetlabs.pcp.broker.in-memory-inventory
   (:require [clojure.tools.logging :as log]
-            [puppetlabs.pcp.protocol :refer [explode-uri uri-wildcard?]]
+            [puppetlabs.pcp.protocol-v2 :refer [explode-uri uri-wildcard?]]
             [schema.core :as s]))
 
 (defn endpoint-pattern-match?
