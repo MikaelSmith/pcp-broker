@@ -1,11 +1,10 @@
 (ns puppetlabs.pcp.broker.capsule
-  (:require [clj-time.coerce :as time-coerce]
-            [clj-time.core :as time]
+  (:require [clj-time.core :as time]
             [puppetlabs.pcp.message-v2 :as message :refer [Message]]
             [puppetlabs.pcp.protocol-v2 :as p]
             [puppetlabs.kitchensink.core :as ks]
             [schema.core :as s])
-  (:import (org.joda.time DateTime)))
+  (:import (org.joda.time DateTime Period)))
 
 (defprotocol CapsuleInterface
   (summarize [capsule]
@@ -69,17 +68,22 @@
 
 (s/defn -encode :- Message
   "Return the Message we should send when sending this Capsule.  Adds
-  the debug chunk to the message"
+  the debug chunk to the message, and updates the ttl"
   [capsule :- Capsule]
   (let [message (:message capsule)
-        debug   {:hops (:hops capsule)}]
+        debug   {:hops (:hops capsule)}
+        expires (:expires capsule)
+        now     (time/now)
+        new-ttl (if (time/before? now expires) (time/in-millis (time/interval now expires)) 0)]
     (s/validate p/DebugChunk debug)
-    (message/set-json-debug message debug)))
+    (-> message
+        (message/set-json-debug debug)
+        (message/set-expiry new-ttl :millis))))
 
 (s/defn wrap :- Capsule
   "Wrap a Message producing a Capsule"
   [message :- Message]
   (map->Capsule
-   {:expires  (time-coerce/to-date-time (:expires message))
+   {:expires  (-> (:ttl message) (long) (Period.) time/from-now)
     :message  message
     :hops     []}))

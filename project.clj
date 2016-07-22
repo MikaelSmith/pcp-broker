@@ -64,7 +64,7 @@
                  ;; try+/throw+
                  [slingshot "0.12.2"]
 
-                 [puppetlabs/pcp-common "0.5.1"]
+                 [puppetlabs/pcp-common "0.5.2-SNAPSHOT"]
 
                  ;; MQ - activemq
                  [clamq/clamq-activemq "0.4"]
