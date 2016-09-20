@@ -56,10 +56,6 @@
 
                  [puppetlabs/pcp-common "0.5.4"]
 
-                 ;; MQ - activemq
-                 [clamq/clamq-activemq "0.4"]
-                 [org.apache.activemq/activemq-core "5.6.0"
-                  :exclusions [org.fusesource.fuse-extra/fusemq-leveldb]]
                  ;; bridge to allow some spring/activemq stuff to log over slf4j
                  [org.slf4j/jcl-over-slf4j "1.7.10"]
 
