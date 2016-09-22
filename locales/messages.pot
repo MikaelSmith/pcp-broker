@@ -18,25 +18,20 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 
 #: src/puppetlabs/pcp/broker/core.clj
-msgid "{0} must contain at least 1 certificate"
+msgid "Failed to deliver error message"
 msgstr ""
 
 #: src/puppetlabs/pcp/broker/core.clj
-msgid "Failed to deliver '{messageid}' for '{destination}': '{reason}'"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "multiple recipients no longer supported"
+msgid "Failed to deliver message for '{destination}': '{reason}'"
 msgstr ""
 
 #: src/puppetlabs/pcp/broker/core.clj
 msgid ""
-"Delivering '{messageid}' for '{destination}' to '{commonname}' at "
-"'{remoteaddress}'"
+"Delivering message for '{destination}' to '{commonname}' at '{remoteaddress}'"
 msgstr ""
 
 #: src/puppetlabs/pcp/broker/core.clj
-msgid "Error in deliver-message"
+msgid "Failed to deliver message"
 msgstr ""
 
 #: src/puppetlabs/pcp/broker/core.clj
@@ -44,39 +39,7 @@ msgid "not connected"
 msgstr ""
 
 #: src/puppetlabs/pcp/broker/core.clj
-msgid "''server'' type connections not accepted"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
-msgid ""
-"Received session association for '{uri}' from '{commonname}' "
-"'{remoteaddress}'. Session was already associated as '{existinguri}'"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "Session already associated"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "Replying to '{requester}' with associate_response: '{rawmsg}'"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "Invalid associate_request ('{reason}'); closing '{uri}' WebSocket"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "association unsuccessful"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
-msgid ""
-"Node with URI '{uri}' already associated with connection '{commonname}' "
-"'{remoteaddress}'"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "superseded"
+msgid "Failed to deliver inventory to '{commonname}' at '{remoteaddress}'"
 msgstr ""
 
 #: src/puppetlabs/pcp/broker/core.clj
@@ -86,8 +49,7 @@ msgid ""
 msgstr ""
 
 #: src/puppetlabs/pcp/broker/core.clj
-msgid ""
-"Authorizing '{messageid}' for '{destination}' - '{allowed}': '{auth-message}'"
+msgid "Authorizing message for '{destination}' - '{allowed}': '{auth-message}'"
 msgstr ""
 
 #: src/puppetlabs/pcp/broker/core.clj
@@ -95,32 +57,7 @@ msgid "Processing PCP message: '{rawmsg}'"
 msgstr ""
 
 #: src/puppetlabs/pcp/broker/core.clj
-msgid "Message not authenticated"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
 msgid "Message not authorized"
-msgstr ""
-
-#. default case
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "unexpected message validation outcome"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
-msgid ""
-"Failed to process '{messagetype}' '{messageid}' from '{commonname}' "
-"'{remoteaddress}': '{errortype}'"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "Error {0} handling message: {1}"
-msgstr ""
-
-#. TODO(richardc): this could use a different message_type to
-#. indicate an encoding error rather than a processing error
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "Could not decode message"
 msgstr ""
 
 #: src/puppetlabs/pcp/broker/core.clj
@@ -128,7 +65,11 @@ msgid "Broker is not running"
 msgstr ""
 
 #: src/puppetlabs/pcp/broker/core.clj
-msgid "No client certificate, closing '{remoteaddress}'"
+msgid "Binary messages not supported"
+msgstr ""
+
+#: src/puppetlabs/pcp/broker/core.clj
+msgid "no client certificate, closing '{remoteaddress}'"
 msgstr ""
 
 #: src/puppetlabs/pcp/broker/core.clj
@@ -147,10 +88,6 @@ msgstr ""
 msgid ""
 "client '{commonname}' disconnected from '{remoteaddress}' '{statuscode}' "
 "'{reason}'"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "vNext protocol endpoint not configured"
 msgstr ""
 
 #: src/puppetlabs/pcp/broker/service.clj

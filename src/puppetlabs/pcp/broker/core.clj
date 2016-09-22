@@ -1,33 +1,26 @@
 (ns puppetlabs.pcp.broker.core
   (:require [metrics.gauges :as gauges]
             [puppetlabs.experimental.websockets.client :as websockets-client]
-            [puppetlabs.pcp.broker.connection :as connection :refer [Websocket Codec ConnectionState]]
+            [puppetlabs.pcp.broker.connection :as conn :refer [Websocket]]
             [puppetlabs.pcp.broker.metrics :as metrics]
-            [puppetlabs.pcp.message :as message :refer [Message]]
-            [puppetlabs.pcp.protocol :as p]
+            [puppetlabs.pcp.broker.protocol :as p :refer [Message]]
+            [cheshire.core :as cheshire]
             [puppetlabs.metrics :refer [time!]]
             [puppetlabs.ssl-utils.core :as ssl-utils]
             [puppetlabs.structured-logging.core :as sl]
             [puppetlabs.trapperkeeper.authorization.ring :as ring]
             [puppetlabs.trapperkeeper.services.status.status-core :as status-core]
             [schema.core :as s]
-            [slingshot.slingshot :refer [throw+ try+]]
             [puppetlabs.i18n.core :as i18n])
-  (:import (puppetlabs.pcp.broker.connection Connection)
-           (clojure.lang IFn Atom)
+  (:import (clojure.lang IFn Atom)
            (java.util.concurrent ConcurrentHashMap)))
 
 (def Broker
-  {:record-client      IFn
-   :find-clients       IFn
-   :authorization-check IFn
-   :uri-map            ConcurrentHashMap ;; Mapping of Uri to Websocket, for sending
-   :connections        ConcurrentHashMap ;; Mapping of Websocket session to Connection state
-   :metrics-registry   Object
-   :metrics            {s/Keyword Object}
-   :ssl-cert           s/Str
-   :broker-cn          Atom
-   :state              Atom})
+  {:authorization-check IFn
+   :uri-map             ConcurrentHashMap ;; Mapping of Uri to Websocket
+   :metrics-registry    Object
+   :metrics             {s/Keyword Object}
+   :state               Atom})
 
 (s/defn build-and-register-metrics :- {s/Keyword Object}
   [broker :- Broker]
@@ -40,253 +33,103 @@
      :message-queueing (.timer registry "puppetlabs.pcp.message-queueing")
      :on-send          (.timer registry "puppetlabs.pcp.on-send")}))
 
-(s/defn get-broker-cn :- s/Str
-  [certificate :- s/Str]
-  (let [x509-chain (ssl-utils/pem->certs certificate)]
-    (when (empty? x509-chain)
-      (throw (IllegalArgumentException.
-               (i18n/trs "{0} must contain at least 1 certificate", certificate))))
-    (ssl-utils/get-cn-from-x509-certificate (first x509-chain))))
-
-(s/defn broker-uri :- p/Uri
-  [broker :- Broker]
-  (str "pcp://" (:broker-cn broker) "/server"))
-
 ;; connection map lifecycle
-(s/defn add-connection! :- Connection
-  "Add a Connection to the connections to track a websocket"
-  [broker :- Broker ws :- Websocket codec :- Codec]
-  (let [connection (connection/make-connection ws codec)]
-    (.put (:connections broker) ws connection)
-    connection))
+(s/defn add-connection!
+  "Add tracking of a websocket connection"
+  [broker :- Broker ws :- Websocket]
+  (let [uri (conn/common-name ws)]
+    (.put (:uri-map broker) uri ws)))
 
 (s/defn remove-connection!
-  "Remove tracking of a Connection from the broker by websocket"
+  "Remove tracking of a connection from the broker"
   [broker :- Broker ws :- Websocket]
-  (if-let [uri (get-in (:connections broker) [ws :uri])]
-    (.remove (:uri-map broker) uri))
-  (.remove (:connections broker) ws))
-
-(s/defn get-connection :- (s/maybe Connection)
-  [broker :- Broker ws :- Websocket]
-  (get (:connections broker) ws))
+  (let [uri (conn/common-name ws)]
+    ;; TODO: if a client establishes multiple connections, then disconnects the first one, it will be unreachable
+    ;; if we add a connection that already existed, we should probably close the previous connection first
+    (.remove (:uri-map broker) uri)))
 
 (s/defn get-websocket :- (s/maybe Websocket)
   "Return the websocket a node identified by a uri is connected to, false if not connected"
-  [broker :- Broker uri :- p/Uri]
+  [broker :- Broker uri :- s/Str]
   (get (:uri-map broker) uri))
 
 ;;
 ;; Message processing
 ;;
 
-(def MessageLog
-  "Schema for a loggable summary of a message"
-  {:messageid p/MessageId
-   :source s/Str
-   :messagetype s/Str
-   :destination (s/either p/Uri [p/Uri])})
-
-(s/defn summarize :- MessageLog
-  [message :- Message]
-  {:messageid (:id message)
-   :messagetype (:message_type message)
-   :source (:sender message)
-   :destination (:targets message)})
-
-;; message lifecycle
-
-(s/defn make-error-data-content :- p/ErrorMessage
-  [in-reply-to-message description]
-  (let [data-content {:description description}
-        data-content (if in-reply-to-message
-                       (assoc data-content :id (:id in-reply-to-message))
-                       data-content)]
-    data-content))
-
 (s/defn send-error-message
-  [in-reply-to-message :- (s/maybe Message) description :- s/Str connection :- Connection]
-  (let [data-content (make-error-data-content in-reply-to-message description)
-        error-msg (-> (message/make-message :message_type "http://puppetlabs.com/error_message"
-                                            :sender "pcp:///server")
-                      (message/set-json-data data-content))
-        error-msg (if in-reply-to-message
-                    (assoc error-msg :in-reply-to (:id in-reply-to-message))
-                    error-msg)
-        {:keys [codec websocket]} connection
-        encode (:encode codec)]
-    (websockets-client/send! websocket (encode error-msg))
-    nil))
+  [description :- s/Str ws :- Websocket]
+  (let [error-msg {:message_type "http://puppetlabs.com/error_message"
+                   :data description}]
+    (try
+      (websockets-client/send! ws (cheshire/generate-string error-msg))
+      (catch Exception e
+        (sl/maplog :debug e {:type :message-delivery-error}
+                   (i18n/trs "Failed to deliver error message"))))))
 
 (s/defn handle-delivery-failure
-  "If the message is not expired, schedule it for a future delivery by inserting
-  a `redelivery` hop entry into its debug chunk and adding the message to the
-  delivery queue with a delay property.
-  Otherwise, if the message is expired, reply with a TTL expired message."
-  [broker :- Broker message :- Message sender :- Connection reason :- s/Str]
-  (sl/maplog :trace (assoc (summarize message)
+  "Log and send error for failed delivery."
+  [broker :- Broker message :- Message ws :- Websocket reason :- s/Str]
+  (sl/maplog :trace (assoc (p/summarize message)
                            :type :message-delivery-failure
                            :reason reason)
-             (i18n/trs "Failed to deliver '{messageid}' for '{destination}': '{reason}'"))
-  (send-error-message message reason sender))
+             (i18n/trs "Failed to deliver message for '{destination}': '{reason}'"))
+  (send-error-message reason ws))
 
 (s/defn deliver-message
-  "Message consumer. Delivers a message to the websocket indicated by the :targets field"
-  [broker :- Broker message :- Message sender :- Connection]
-  ;; return error if multiple targets specified
-  (if (or (not= 1 (count (:targets message))) (p/uri-wildcard? (first (:targets message))))
-    (handle-delivery-failure broker message sender (i18n/trs "multiple recipients no longer supported"))
-    (if-let [websocket (get-websocket broker (first (:targets message)))]
-      (try
-        (let [connection (get-connection broker websocket)
-              encode (get-in connection [:codec :encode])]
-          (sl/maplog
-            :debug (merge (summarize message)
-                          (connection/summarize connection)
-                          {:type :message-delivery})
-            (i18n/trs "Delivering '{messageid}' for '{destination}' to '{commonname}' at '{remoteaddress}'"))
-          (locking websocket
-            (time! (:on-send (:metrics broker))
-                   (websockets-client/send! websocket (encode message)))))
-        (catch Exception e
-          (sl/maplog :error e
-                     {:type :message-delivery-error}
-                     (i18n/trs "Error in deliver-message"))
-          (handle-delivery-failure broker message sender (str e))))
-      (handle-delivery-failure broker message sender (i18n/trs "not connected")))))
+  "Message consumer. Delivers a message to the websocket indicated by the :target field"
+  [broker :- Broker message :- Message sender :- Websocket]
+  (if-let [ws (get-websocket broker (:target message))]
+    (try
+      (sl/maplog
+        :debug (merge (p/summarize message)
+                      (conn/summarize ws)
+                      {:type :message-delivery})
+        (i18n/trs "Delivering message for '{destination}' to '{commonname}' at '{remoteaddress}'"))
+      (let [xmsg (-> message
+                     (assoc :sender (conn/common-name sender))
+                     (dissoc :target))]
+        (locking ws
+          (time! (:on-send (:metrics broker))
+                 (websockets-client/send! ws (cheshire/generate-string xmsg)))))
+      (catch Exception e
+        (sl/maplog :debug e {:type :message-delivery-error}
+                   (i18n/trs "Failed to deliver message"))
+        (handle-delivery-failure broker message sender (str e))))
+    (handle-delivery-failure broker message sender (i18n/trs "not connected"))))
 
-(s/defn session-association-request? :- s/Bool
-  "Return true if message is a session association message"
-  [message :- Message]
-  (and (= (:targets message) ["pcp:///server"])
-       (= (:message_type message) "http://puppetlabs.com/associate_request")))
-
-;; process-associate-request! helper
-(s/defn reason-to-deny-association :- (s/maybe s/Str)
-  "Returns an error message describing why the session should not be
-  allowed, if it should be denied"
-  [broker :- Broker connection :- Connection as :- p/Uri]
-  (let [[_ type] (p/explode-uri as)]
-    (cond
-      (= type "server")
-      (i18n/trs "''server'' type connections not accepted")
-      (= :associated (:state connection))
-      (let [{:keys [uri]} connection]
-        (sl/maplog
-          :debug (assoc (connection/summarize connection)
-                        :uri as
-                        :existinguri uri
-                        :type :connection-already-associated)
-          (i18n/trs "Received session association for '{uri}' from '{commonname}' '{remoteaddress}'. Session was already associated as '{existinguri}'"))
-        (i18n/trs "Session already associated")))))
-
-(s/defn make-associate_response-data-content :- p/AssociateResponse
-  [id reason-to-deny]
-  (if reason-to-deny
-    {:id id :success false :reason reason-to-deny}
-    {:id id :success true}))
-
-(s/defn process-associate-request! :- (s/maybe Connection)
-  "Send an associate_response that will be successful if:
-    - a reason-to-deny is not specified as an argument nor determined by
-      reason-to-deny-association;
-    - the requester `client_type` is not `server`;
-    - the specified WebSocket connection has not been associated previously.
-  If the request gets denied, the WebSocket connection will be closed and the
-  function returns nil.
-  Otherwise, the 'Connection' object's state will be marked as associated and
-  returned. Also, in case another WebSocket connection with the same client
-  is currently associated, such old connection will be superseded by the new
-  one (i.e. the old connection will be closed by the brocker).
-
-  Note that this function will not update the broker by removing the connection
-  from the 'connections' map, nor the 'uri-map'. It is assumed that such update
-  will be done asynchronously by the onClose handler."
-  ;; TODO(ale): make associate_request idempotent when succeed (PCP-521)
-  ([broker :- Broker message :- Message connection :- Connection]
-    (let [requester-uri (:sender message)
-          reason-to-deny (reason-to-deny-association broker connection requester-uri)]
-      (process-associate-request! broker message connection reason-to-deny)))
-  ([broker :- Broker request :- Message connection :- Connection reason-to-deny :- (s/maybe s/Str)]
-    ;; NB(ale): don't validate the associate_request as there's no data chunk...
-    (let [ws (:websocket connection)
-          id (:id request)
-          encode (get-in connection [:codec :encode])
-          requester-uri (:sender request)
-          response-data (make-associate_response-data-content id reason-to-deny)]
-      (let [message (-> (message/make-message :message_type "http://puppetlabs.com/associate_response"
-                                              :targets [requester-uri]
-                                              :in-reply-to id
-                                              :sender "pcp:///server")
-                        (message/set-json-data response-data)
-                        (message/set-expiry 3 :seconds))]
-        (sl/maplog :debug {:type :associate_response-trace
-                           :requester requester-uri
-                           :rawmsg message}
-                   (i18n/trs "Replying to '{requester}' with associate_response: '{rawmsg}'"))
-        (websockets-client/send! ws (encode message)))
-      (if reason-to-deny
-        (do
-          (sl/maplog
-            :debug {:type   :connection-association-failed
-                    :uri    requester-uri
-                    :reason reason-to-deny}
-            (i18n/trs "Invalid associate_request ('{reason}'); closing '{uri}' WebSocket"))
-          (websockets-client/close! ws 4002 (i18n/trs "association unsuccessful"))
-          nil)
-        (let [{:keys [uri-map record-client]} broker]
-          (when-let [old-ws (get-websocket broker requester-uri)]
-            (let [connections (:connections broker)]
-              (sl/maplog
-                :debug (assoc (connection/summarize connection)
-                         :uri requester-uri
-                         :type :connection-association-failed)
-                (i18n/trs "Node with URI '{uri}' already associated with connection '{commonname}' '{remoteaddress}'"))
-              (websockets-client/close! old-ws 4000 (i18n/trs "superseded"))
-              (.remove connections old-ws)))
-          (.put uri-map requester-uri ws)
-          (record-client requester-uri)
-          (assoc connection
-            :uri requester-uri
-            :state :associated))))))
-
-(s/defn make-inventory_response-data-content :- p/InventoryResponse
-  [uris]
-  {:uris uris})
+(s/defn find-clients
+  "Return a list of matching connected clients. If an empty list is passed, return all connected clients."
+  [broker :- Broker names :- [s/Str]]
+  (if (empty? names)
+    (.keySet (:uri-map broker))
+    (filter (partial get-websocket broker) names)))
 
 (s/defn process-inventory-request
-  "Process a request for inventory data.
-   This function assumes that the requester client is associated.
-   Returns nil."
-  [broker :- Broker message :- Message connection :- Connection]
-  (assert (= (:state connection) :associated))
-  (let [data (message/get-json-data message)]
+  "Process a request for inventory data."
+  [broker :- Broker message :- Message ws :- Websocket]
+  (let [data (:data message)]
     (s/validate p/InventoryRequest data)
-    (let [uris (doall (filter (partial get-websocket broker) ((:find-clients broker) (:query data))))
-          response-data (make-inventory_response-data-content uris)]
-      (deliver-message
-        broker
-        (-> (message/make-message :message_type "http://puppetlabs.com/inventory_response"
-                                  :targets [(:sender message)]
-                                  :in-reply-to (:id message)
-                                  :sender "pcp:///server")
-            (message/set-json-data response-data)
-            ;; set expiration last so if any of the previous steps take
-            ;; significant time the message doesn't expire
-            (message/set-expiry 3 :seconds))
-        connection)))
-  nil)
+    (let [uris (find-clients broker data)
+          response {:message_type "http://puppetlabs.com/inventory_response"
+                    :data uris}]
+      (try
+        (websockets-client/send! ws (cheshire/generate-string response))
+        (catch Exception e
+          (sl/maplog
+            :debug e (merge (conn/summarize ws)
+                            {:type :message-delivery-error})
+            (i18n/trs "Failed to deliver inventory to '{commonname}' at '{remoteaddress}'")))))))
 
-(s/defn process-server-message! :- (s/maybe Connection)
+(s/defn process-server-message!
   "Process a message directed at the middleware"
-  [broker :- Broker message :- Message connection :- Connection]
+  [broker :- Broker message :- Message ws :- Websocket]
   (let [message-type (:message_type message)]
     (case message-type
-      "http://puppetlabs.com/associate_request" (process-associate-request! broker message connection)
-      "http://puppetlabs.com/inventory_request" (process-inventory-request broker message connection)
+      "http://puppetlabs.com/inventory_request" (process-inventory-request broker message ws)
       (do
         (sl/maplog
-          :debug (assoc (connection/summarize connection)
+          :debug (assoc (conn/summarize ws)
                    :messagetype message-type
                    :type :broker-unhandled-message)
           (i18n/trs "Unhandled message type '{messagetype}' received from '{commonname}' '{remoteaddr}'"))))))
@@ -296,71 +139,35 @@
 ;;
 
 (s/defn make-ring-request :- ring/Request
-  [message :- Message connection :- (s/maybe Connection)]
-  (let [{:keys [sender targets message_type destination_report]} message
+  [message :- Message ws :- Websocket]
+  (let [{:keys [sender target message_type]} message
         form-params {}
         query-params {"sender" sender
-                      "targets" (if (= 1 (count targets)) (first targets) targets)
-                      "message_type" message_type
-                      "destination_report" (boolean destination_report)}
+                      "target" target
+                      "message_type" message_type}
         request {:uri            "/pcp-broker/send"
                  :request-method :post
-                 :remote-addr    ""
+                 :remote-addr    (conn/remote-address ws)
+                 :ssl-client-cert (first (websockets-client/peer-certs ws))
                  :form-params    form-params
                  :query-params   query-params
                  :params         (merge query-params form-params)}]
-    ;; NB(ale): we may not have the Connection when running tests
-    (if connection
-      (let [remote-addr (:remote-address connection)
-            ssl-client-cert (first (websockets-client/peer-certs (:websocket connection)))]
-        (merge request {:remote-addr remote-addr
-                        :ssl-client-cert ssl-client-cert}))
-      request)))
+    request))
 
-;; NB(ale): using (s/Maybe Connection) in the signature for the sake of testing
 (s/defn authorized? :- s/Bool
   "Check if the message within the specified message is authorized"
-  [broker :- Broker request :- Message connection :- (s/maybe Connection)]
-  (let [ring-request (make-ring-request request connection)
+  [broker :- Broker request :- Message ws :- Websocket]
+  (let [ring-request (make-ring-request request ws)
         {:keys [authorization-check]} broker
         {:keys [authorized message]} (authorization-check ring-request)
         allowed (boolean authorized)]
     (sl/maplog
-      :trace (merge (summarize request)
+      :trace (merge (p/summarize request)
                     {:type         :message-authorization
                      :allowed      allowed
                      :auth-message message})
-      (i18n/trs "Authorizing '{messageid}' for '{destination}' - '{allowed}': '{auth-message}'"))
+      (i18n/trs "Authorizing message for '{destination}' - '{allowed}': '{auth-message}'"))
     allowed))
-
-(s/defn authenticated? :- s/Bool
-  "Check if the cert name advertised by the sender of the message contained in
-   the specified Message matches the cert name in the certificate of the
-   given Connection"
-  [message :- Message connection :- Connection]
-  (let [{:keys [common-name]} connection
-        sender (:sender message)
-        [client] (p/explode-uri sender)]
-    (= client common-name)))
-
-(def MessageValidationOutcome
-  "Outcome of validate-message"
-  (s/enum :to-be-ignored-during-association
-          :not-authenticated
-          :not-authorized
-          :to-be-processed))
-
-(s/defn validate-message :- MessageValidationOutcome
-  "Determine whether the specified message should be processed by checking,
-   in order, if the message: 1) is an associate-request as expected during
-   Session Association; 2) is authenticated; 3) is authorized; 4) expired"
-  [broker :- Broker message :- Message connection :- Connection is-association-request :- s/Bool]
-  (cond
-    (and (= :open (:state connection))
-         (not is-association-request)) :to-be-ignored-during-association
-    (not (authenticated? message connection)) :not-authenticated
-    (not (authorized? broker message connection)) :not-authorized
-    :else :to-be-processed))
 
 ;;
 ;; WebSocket onMessage handling
@@ -371,97 +178,48 @@
   (sl/maplog
     [:puppetlabs.pcp.broker.pcp_access lvl]
     message-data
-    "{accessoutcome} {remoteaddress} {commonname} {source} {messagetype} {messageid} {destination}"))
+    "{accessoutcome} {remoteaddress} {commonname} {source} {messagetype} {destination}"))
 
-;; NB(ale): using (s/Maybe Websocket) in the signature for the sake of testing
-(s/defn process-message! :- (s/maybe Connection)
-  "Deserialize, validate (authentication, authorization, and expiration), and
-  process the specified raw message. Return the 'Connection' object associated
-  to the specified 'Websocket' in case it gets modified (hence the '!' in the
-  function name), otherwise nil.
-  Also, log the message validation outcome via 'pcp-access' logger."
-  [broker :- Broker bytes :- message/ByteArray ws :- (s/maybe Websocket)]
-  (let [connection (get-connection broker ws)
-        decode (get-in connection [:codec :decode])]
-    (try+
-      (let [message (decode bytes)
-            message-data (merge (connection/summarize connection)
-                                (summarize message))
-            is-association-request (session-association-request? message)]
-        (sl/maplog :trace {:type :incoming-message-trace :rawmsg message}
-                   (i18n/trs "Processing PCP message: '{rawmsg}'"))
-        (try+
-          (case (validate-message broker message connection is-association-request)
-            :to-be-ignored-during-association
-            (log-access :warn (assoc message-data :accessoutcome "IGNORED_DURING_ASSOCIATION"))
-            :not-authenticated
-            (let [not-authenticated-msg (i18n/trs "Message not authenticated")]
-              (log-access :warn (assoc message-data :accessoutcome "AUTHENTICATION_FAILURE"))
-              (if is-association-request
-                ;; send an unsuccessful associate_response and close the WebSocket
-                (process-associate-request! broker message connection not-authenticated-msg)
-                (send-error-message message not-authenticated-msg connection)))
-            :not-authorized
-            (let [not-authorized-msg (i18n/trs "Message not authorized")]
-              (log-access :warn (assoc message-data :accessoutcome "AUTHORIZATION_FAILURE"))
-              (if is-association-request
-                ;; send an unsuccessful associate_response and close the WebSocket
-                (process-associate-request! broker message connection not-authorized-msg)
-                ;; TODO(ale): use 'unauthorized' in version 2
-                (send-error-message message not-authorized-msg connection)))
-            :to-be-processed
-            (do
-              (log-access :info (assoc message-data :accessoutcome "AUTHORIZATION_SUCCESS"))
-              (if (= (:targets message) ["pcp:///server"])
-                (process-server-message! broker message connection)
-                (do
-                  (assert (= (:state connection) :associated))
-                  (deliver-message broker message connection)
-                  nil)))
-            ;; default case
-            (assert false (i18n/trs "unexpected message validation outcome")))
-          (catch map? m
-            (sl/maplog
-              :debug (merge (connection/summarize connection)
-                            (summarize message)
-                            {:type :processing-error :errortype (:type m)})
-              (i18n/trs "Failed to process '{messagetype}' '{messageid}' from '{commonname}' '{remoteaddress}': '{errortype}'"))
-            (send-error-message
-              message
-              (i18n/trs "Error {0} handling message: {1}" (:type m) &throw-context)
-              connection))))
-      (catch map? m
-        (sl/maplog
-          [:puppetlabs.pcp.broker.pcp_access :warn]
-          (assoc (connection/summarize connection) :type :deserialization-failure
-                                                   :outcome "DESERIALIZATION_ERROR")
-          "{outcome} {remoteaddress} {commonname} unknown unknown unknown unknown unknown")
-        ;; TODO(richardc): this could use a different message_type to
-        ;; indicate an encoding error rather than a processing error
-        (send-error-message nil (i18n/trs "Could not decode message") connection)))))
+(s/defn process-message!
+  "Authorize and process the specified raw message.
+  Log the message authorization outcome via 'pcp-access' logger."
+  [broker :- Broker ws :- Websocket message]
+  (sl/maplog :trace {:type :incoming-message-trace :rawmsg message}
+             (i18n/trs "Processing PCP message: '{rawmsg}'"))
+  (s/validate Message message)
+  (let [message-data (merge (conn/summarize ws)
+                            (p/summarize message))]
+    (if-not (authorized? broker message ws)
+      (do
+        (log-access :warn (assoc message-data :accessoutcome "AUTHORIZATION_FAILURE"))
+        (send-error-message message (i18n/trs "Message not authorized") ws))
+      (do
+        (log-access :info (assoc message-data :accessoutcome "AUTHORIZATION_SUCCESS"))
+        (if (empty? (:target message))
+          (process-server-message! broker message ws)
+          (deliver-message broker message ws))))))
 
 (defn on-message!
   "If the broker service is not running, close the WebSocket connection.
-   Otherwise process the message and, in case a 'Connection' object is
-   returned, updates the related broker's 'connections' map entry."
-  [broker ws bytes]
+   Otherwise process the message"
+  [broker ws message]
   (time!
     (:on-message (:metrics broker))
     (if-not (= :running @(:state broker))
       (websockets-client/close! ws 1011 (i18n/trs "Broker is not running"))
-      (when-let [connection (process-message! broker bytes ws)]
-        (assert (instance? Connection connection))
-        (.put (:connections broker) ws connection)))))
+      (process-message! broker ws (cheshire/parse-string message true)))))
 
 (defn- on-text!
   "OnMessage (text) websocket event handler"
   [broker ws message]
-  (on-message! broker ws (message/string->bytes message)))
+  (on-message! broker ws message))
 
 (defn- on-bytes!
   "OnMessage (binary) websocket event handler"
   [broker ws bytes offset len]
-  (on-message! broker ws bytes))
+  (sl/maplog
+    :debug {}
+    (i18n/trs "Binary messages not supported")))
 
 ;;
 ;; Other WebSocket event handlers
@@ -471,52 +229,47 @@
   "OnOpen WebSocket event handler. Close the WebSocket connection if the
    Broker service is not running or if the client common name is not obtainable
    from its cert. Otherwise set the idle timeout of the WebSocket connection
-   to 15 min."
-  [broker codec ws]
+   to 5 min."
+  [broker ws]
   (time!
     (:on-connect (:metrics broker))
     (if-not (= :running @(:state broker))
       (websockets-client/close! ws 1011 (i18n/trs "Broker is not running"))
-      (let [connection (add-connection! broker ws codec)
-            {:keys [common-name]} connection
-            idle-timeout (* 1000 60 15)]
-        (if (nil? common-name)
-          (do
-            (sl/maplog :debug (assoc (connection/summarize connection)
-                                :type :connection-no-peer-certificate)
-                       (i18n/trs "No client certificate, closing '{remoteaddress}'"))
-            (websockets-client/close! ws 4003 (i18n/trs "No client certificate")))
-          (do
-            (websockets-client/idle-timeout! ws idle-timeout)
-            (sl/maplog :debug (assoc (connection/summarize connection)
-                                :type :connection-open)
-                       (i18n/trs "client '{commonname}' connected from '{remoteaddress}'"))))))))
+      (if (empty? (conn/common-name ws))
+        (do
+          (sl/maplog :debug (assoc (conn/summarize ws)
+                                   :type :connection-no-peer-certificate)
+                     (i18n/trs "no client certificate, closing '{remoteaddress}'"))
+          (websockets-client/close! ws 4003 (i18n/trs "No client certificate")))
+        (do
+          (add-connection! broker ws)
+          (websockets-client/idle-timeout! ws (* 1000 60 5))
+          (sl/maplog :debug (assoc (conn/summarize ws)
+                                   :type :connection-open)
+                     (i18n/trs "client '{commonname}' connected from '{remoteaddress}'")))))))
 
 (defn- on-error
   "OnError WebSocket event handler. Just log the event."
   [broker ws e]
-  (let [connection (get-connection broker ws)]
-    (sl/maplog :error e (assoc (connection/summarize connection)
-                               :type :connection-error)
-               (i18n/trs "Websocket error '{commonname}' '{remoteaddress}'"))))
+  (sl/maplog :error e (assoc (conn/summarize ws)
+                             :type :connection-error)
+             (i18n/trs "Websocket error '{commonname}' '{remoteaddress}'")))
 
 (defn- on-close!
-  "OnClose WebSocket event handler. Remove the Connection instance out of the
-   broker's 'connections' map."
+  "OnClose WebSocket event handler. Remove the connection from the broker's uri-map."
   [broker ws status-code reason]
   (time! (:on-close (:metrics broker))
-         (let [connection (get-connection broker ws)]
-           (sl/maplog
-             :debug (assoc (connection/summarize connection)
-                           :type :connection-close
-                           :statuscode status-code
-                           :reason reason)
-             (i18n/trs "client '{commonname}' disconnected from '{remoteaddress}' '{statuscode}' '{reason}'"))
-           (remove-connection! broker ws))))
+         (sl/maplog
+           :debug (assoc (conn/summarize ws)
+                         :type :connection-close
+                         :statuscode status-code
+                         :reason reason)
+           (i18n/trs "client '{commonname}' disconnected from '{remoteaddress}' '{statuscode}' '{reason}'"))
+         (remove-connection! broker ws)))
 
 (s/defn build-websocket-handlers :- {s/Keyword IFn}
-  [broker :- Broker codec]
-  {:on-connect (partial on-connect! broker codec)
+  [broker :- Broker]
+  {:on-connect (partial on-connect! broker)
    :on-error   (partial on-error broker)
    :on-close   (partial on-close! broker)
    :on-text    (partial on-text! broker)
@@ -528,60 +281,26 @@
 
 (def InitOptions
   {:add-websocket-handler IFn
-   :record-client IFn
-   :find-clients IFn
    :authorization-check IFn
-   :get-metrics-registry IFn
-   :get-route IFn
-   :ssl-cert s/Str})
-
-(s/def default-codec :- Codec
-  {:decode message/decode
-   :encode message/encode})
-
-(s/def v1-codec :- Codec
-  "Codec for handling v1.0 messages"
-  {:decode message/decode
-   :encode (fn [message]
-             ;; strip in-reply-to for everything but inventory_response
-             (let [message_type (:message_type message)
-                   message (if (= "http://puppetlabs.com/inventory_response" message_type)
-                             message
-                             (dissoc message :in-reply-to))]
-               (message/encode message)))})
+   :get-metrics-registry IFn})
 
 (s/defn init :- Broker
   [options :- InitOptions]
-  (let [{:keys [path
-                add-websocket-handler
-                record-client find-clients authorization-check
-                get-route
-                get-metrics-registry ssl-cert]} options]
-    (let [broker             {:record-client      record-client
-                              :find-clients       find-clients
-                              :authorization-check authorization-check
+  (let [{:keys [add-websocket-handler authorization-check
+                get-metrics-registry]} options]
+    (let [broker             {:authorization-check authorization-check
                               :metrics            {}
                               :metrics-registry   (get-metrics-registry)
-                              :connections        (ConcurrentHashMap.)
                               :uri-map            (ConcurrentHashMap.)
-                              :ssl-cert           ssl-cert
-                              :broker-cn          (atom "")
                               :state              (atom :starting)}
           metrics            (build-and-register-metrics broker)
           broker             (assoc broker :metrics metrics)]
-      (add-websocket-handler (build-websocket-handlers broker v1-codec) {:route-id :v1})
-      (try
-        (when (get-route :vNext)
-          (add-websocket-handler (build-websocket-handlers broker default-codec) {:route-id :vNext}))
-        (catch IllegalArgumentException e
-          (sl/maplog :trace {:type :vnext-unavailable}
-                     (i18n/trs "vNext protocol endpoint not configured"))))
+      (add-websocket-handler (build-websocket-handlers broker) {:route-id :v1})
       broker)))
 
 (s/defn start
   [broker :- Broker]
-  (let [{:keys [ssl-cert broker-cn state]} broker]
-    (reset! broker-cn (get-broker-cn ssl-cert))
+  (let [{:keys [state]} broker]
     (reset! state :running)))
 
 (s/defn stop
