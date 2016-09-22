@@ -25,7 +25,3 @@
 (def InventoryResponse
   "Data schema for http://puppetlabs.com/inventory_response"
   [s/Str])
-
-(def ErrorMessage
-  "Data schema for http://puppetlabs.com/error_message"
-  s/Str)

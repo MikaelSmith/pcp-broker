@@ -18,20 +18,12 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 
 #: src/puppetlabs/pcp/broker/core.clj
-msgid "Failed to deliver error message"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
 msgid "Failed to deliver message for '{destination}': '{reason}'"
 msgstr ""
 
 #: src/puppetlabs/pcp/broker/core.clj
 msgid ""
 "Delivering message for '{destination}' to '{commonname}' at '{remoteaddress}'"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "Failed to deliver message"
 msgstr ""
 
 #: src/puppetlabs/pcp/broker/core.clj
@@ -54,10 +46,6 @@ msgstr ""
 
 #: src/puppetlabs/pcp/broker/core.clj
 msgid "Processing PCP message: '{rawmsg}'"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "Message not authorized"
 msgstr ""
 
 #: src/puppetlabs/pcp/broker/core.clj

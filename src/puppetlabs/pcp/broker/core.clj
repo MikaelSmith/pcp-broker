@@ -57,24 +57,13 @@
 ;; Message processing
 ;;
 
-(s/defn send-error-message
-  [description :- s/Str ws :- Websocket]
-  (let [error-msg {:message_type "http://puppetlabs.com/error_message"
-                   :data description}]
-    (try
-      (websockets-client/send! ws (cheshire/generate-string error-msg))
-      (catch Exception e
-        (sl/maplog :debug e {:type :message-delivery-error}
-                   (i18n/trs "Failed to deliver error message"))))))
-
 (s/defn handle-delivery-failure
-  "Log and send error for failed delivery."
+  "Log error for failed delivery."
   [broker :- Broker message :- Message ws :- Websocket reason :- s/Str]
   (sl/maplog :trace (assoc (p/summarize message)
                            :type :message-delivery-failure
                            :reason reason)
-             (i18n/trs "Failed to deliver message for '{destination}': '{reason}'"))
-  (send-error-message reason ws))
+             (i18n/trs "Failed to deliver message for '{destination}': '{reason}'")))
 
 (s/defn deliver-message
   "Message consumer. Delivers a message to the websocket indicated by the :target field"
@@ -93,8 +82,6 @@
           (time! (:on-send (:metrics broker))
                  (websockets-client/send! ws (cheshire/generate-string xmsg)))))
       (catch Exception e
-        (sl/maplog :debug e {:type :message-delivery-error}
-                   (i18n/trs "Failed to deliver message"))
         (handle-delivery-failure broker message sender (str e))))
     (handle-delivery-failure broker message sender (i18n/trs "not connected"))))
 
@@ -190,9 +177,7 @@
   (let [message-data (merge (conn/summarize ws)
                             (p/summarize message))]
     (if-not (authorized? broker message ws)
-      (do
-        (log-access :warn (assoc message-data :accessoutcome "AUTHORIZATION_FAILURE"))
-        (send-error-message message (i18n/trs "Message not authorized") ws))
+      (log-access :warn (assoc message-data :accessoutcome "AUTHORIZATION_FAILURE"))
       (do
         (log-access :info (assoc message-data :accessoutcome "AUTHORIZATION_SUCCESS"))
         (if (empty? (:target message))
