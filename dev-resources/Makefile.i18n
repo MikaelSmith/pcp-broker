@@ -9,7 +9,7 @@
 MESSAGE_LOCALE=en
 
 # The name of the package into which the translations bundle will be placed
-BUNDLE=puppetlabs.pcp_broker
+BUNDLE=puppetlabs.pxp_dispatch
 # The list of names of packages covered by the translation bundle;
 # by default it contains a single package - the same where the translations
 # bundle itself is placed - but this can be overridden - preferably in

@@ -1,33 +1,33 @@
 (ns user
-  (:require [puppetlabs.trapperkeeper.bootstrap :as tk-bootstrap]
-            [puppetlabs.trapperkeeper.config :as tk-config]
+  (:require [clojure.pprint :as pprint]
+            [clojure.tools.namespace.repl :refer [refresh]]
+            [puppetlabs.trapperkeeper.app :as tka]
+            [puppetlabs.trapperkeeper.bootstrap :as bootstrap]
+            [puppetlabs.trapperkeeper.config :as config]
             [puppetlabs.trapperkeeper.core :as tk]
-            [puppetlabs.trapperkeeper.app :as tk-app]
-            [clojure.tools.namespace.repl :as repl]))
+            [puppetlabs.pxp-dispatch-core :as dispatch]))
 
-;; NOTE: in some other projects, where we need to support per-developer config
-;;  variations, we'll put this code into a namespace called 'user-repl', and
-;;  allow devs to build out their own 'user.clj' that wraps it.  See Puppet Server
-;;  for an example, but YMMV and this simpler approach may be fine.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Basic system life cycle
 
 (def system nil)
 
 (defn init []
   (alter-var-root #'system
-                  (fn [_] (let [services (tk-bootstrap/parse-bootstrap-config! "./test-resources/bootstrap.cfg")
-                                config (tk-config/load-config "./test-resources/conf.d")]
-                            (tk/build-app services config))))
-  (alter-var-root #'system tk-app/init)
-  (tk-app/check-for-errors! system))
+                  (fn [_] (tk/build-app
+                            (bootstrap/parse-bootstrap-config! "./dev-resources/bootstrap.cfg")
+                            (config/load-config "./dev-resources/config.conf"))))
+  (alter-var-root #'system tka/init)
+  (tka/check-for-errors! system))
 
 (defn start []
   (alter-var-root #'system
-                  (fn [s] (if s (tk-app/start s))))
-  (tk-app/check-for-errors! system))
+                  (fn [s] (if s (tka/start s))))
+  (tka/check-for-errors! system))
 
 (defn stop []
   (alter-var-root #'system
-                  (fn [s] (when s (tk-app/stop s)))))
+                  (fn [s] (when s (tka/stop s)))))
 
 (defn go []
   (init)
@@ -35,4 +35,42 @@
 
 (defn reset []
   (stop)
-  (repl/refresh :after 'user/go))
+  (refresh :after 'user/go))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Utilities for interacting with running system
+
+(defn context
+  "Get the current TK application context.  Accepts an optional array
+  argument, which is treated as a sequence of keys to retrieve a nested
+  subset of the map (a la `get-in`)."
+  ([]
+   (context []))
+  ([keys]
+   (get-in @(tka/app-context system) keys)))
+
+(defn print-context
+  "Pretty-print the current TK application context.  Accepts an optional
+  array of keys (a la `get-in`) to print a nested subset of the context."
+  ([]
+   (print-context []))
+  ([keys]
+   (pprint/pprint (context keys))))
+
+(defn get-dispatcher
+  []
+  (:dispatcher (context [:service-contexts :DispatchService])))
+
+(defn client-connected?
+  [node]
+  (dispatch/client-connected? (get-dispatcher) node))
+
+(defn clients-connected
+  []
+  (dispatch/clients-connected (get-dispatcher)))
+
+(defn run-puppet
+  ([node]
+   (run-puppet node {}))
+  ([node options]
+   (dispatch/run-puppet (get-dispatcher) node options)))

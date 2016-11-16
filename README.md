@@ -1,46 +1,34 @@
-## pcp-broker
+# pxp-dispatch
 
-A message broker for the PCP protocol
+A trapperkeeper web app designed to ... well, that part is up to you.
 
-## Installing
+## Usage
 
-To use this service in your trapperkeeper application, simply add this
-project as a dependency in your leiningen project file:
+First, run:
 
-[![Clojars Project](http://clojars.org/puppetlabs/pcp-broker/latest-version.svg)](http://clojars.org/puppetlabs/pcp-broker)
+    $ lein tk
 
-And then see [these notes on configuring](doc/configuration.md)
+Then, open a browser and visit: `http://localhost:8080/hello/pxp-dispatch`
 
-## Running the server
+### Running from the REPL
 
-For development purposes you can run a broker out of a checkout using
-the *insecure* certificates provided in test-resources/ with either
-the following command:
+Alternately, run:
 
-    lein tk
+    $ lein repl
+    nREPL server started on port 52137 on host 127.0.0.1
+    user => (go)
 
-(This one runs the broker with schema validations _disabled_, i.e. the
-same as in production.)
+This will allow you to launch the app from the Clojure REPL. You can then make
+changes and run `(reset)` to reload the app or `(stop)` to shutdown the app.
 
-Or with:
+In addition, the functions `(context)` and `(print-context)` are available to
+print out the current trapperkeeper application context. Both of these take an
+optional array of keys as a parameter, which is used to retrieve a nested
+subset of the context map.
 
-    lein tkv
+## License
 
-(This one runs the broker with schema validations _enabled_ for greater
-scrutiny.)
+Copyright © 2016 FIXME
 
-## Documentation
-
-Look [here](doc/).
-
-## Maintenance
-
-Maintainers: Alessandro Parisi <alessandro@puppet.com>, Michael Smith
-<michael.smith@puppet.com>, Michal Ruzicka <michal.ruzicka@puppet.com>.
-
-Contributing: Please refer to [this][contributing] document.
-
-Tickets: File bug tickets at https://tickets.puppet.com/browse/PCP and add the
-`pcp-broker` component to the ticket.
-
-[contributing]: CONTRIBUTING.md
+Distributed under the Eclipse Public License either version 1.0 or (at
+your option) any later version.

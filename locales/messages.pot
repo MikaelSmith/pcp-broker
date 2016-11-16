@@ -1,12 +1,12 @@
 # SOME DESCRIPTIVE TITLE.
 # Copyright (C) YEAR Puppet <docs@puppet.com>
-# This file is distributed under the same license as the puppetlabs.pcp_broker package.
+# This file is distributed under the same license as the puppetlabs.pxp_dispatch package.
 # FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
 #
 #, fuzzy
 msgid ""
 msgstr ""
-"Project-Id-Version: puppetlabs.pcp_broker \n"
+"Project-Id-Version: puppetlabs.pxp_dispatch \n"
 "Report-Msgid-Bugs-To: docs@puppet.com\n"
 "POT-Creation-Date: \n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
@@ -17,168 +17,59 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "Failed to deliver '{messageid}' for '{destination}': '{reason}'"
+#: src/puppetlabs/pxp_dispatch_core.clj
+msgid "Could not connect to PCP broker at {0}: {1}"
 msgstr ""
 
-#: src/puppetlabs/pcp/broker/core.clj
-msgid ""
-"Delivering '{messageid}' for '{destination}' to '{commonname}' at "
-"'{remoteaddress}'"
+#: src/puppetlabs/pxp_dispatch_core.clj
+msgid "Could not connect to PCP broker"
 msgstr ""
 
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "Error in deliver-message"
+#: src/puppetlabs/pxp_dispatch_core.clj
+msgid "Could not associate with PCP broker at {0}: {1}"
 msgstr ""
 
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "not connected"
+#: src/puppetlabs/pxp_dispatch_core.clj
+msgid "Initializing PCP with {0}"
 msgstr ""
 
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "''server'' type connections not accepted"
+#: src/puppetlabs/pxp_dispatch_core.clj
+msgid "Error deploying {0}: {1}"
 msgstr ""
 
-#: src/puppetlabs/pcp/broker/core.clj
-msgid ""
-"Received session association for '{uri}' from '{commonname}' "
-"'{remoteaddress}'. Session was already associated as '{existinguri}'"
+#: src/puppetlabs/pxp_dispatch_core.clj
+msgid "Timed out waiting for status update from the agent"
 msgstr ""
 
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "Session already associated"
+#: src/puppetlabs/pxp_dispatch_core.clj
+msgid "Could not determine the result of the Puppet run"
 msgstr ""
 
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "Replying to '{requester}' with associate_response: '{rawmsg}'"
+#. TODO: associate server and server url so we can report message routing
+#: src/puppetlabs/pxp_dispatch_core.clj
+msgid "Triggered PXP Puppet run on {0} via {1}"
 msgstr ""
 
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "Invalid associate_request ('{reason}'); closing '{uri}' WebSocket"
+#: src/puppetlabs/pxp_dispatch_core.clj
+msgid "Puppet run was aborted due to shutdown"
 msgstr ""
 
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "association unsuccessful"
+#: src/puppetlabs/pxp_dispatch_service.clj
+msgid "Initializing dispatch service"
 msgstr ""
 
-#: src/puppetlabs/pcp/broker/core.clj
-msgid ""
-"Node with URI '{uri}' already associated with connection '{commonname}' "
-"'{remoteaddress}'"
+#: src/puppetlabs/pxp_dispatch_service.clj
+msgid "Starting dispatch service"
 msgstr ""
 
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "superseded"
+#: src/puppetlabs/pxp_dispatch_service.clj
+msgid "Dispatcher service started"
 msgstr ""
 
-#: src/puppetlabs/pcp/broker/core.clj
-msgid ""
-"Unhandled message type '{messagetype}' received from '{commonname}' "
-"'{remoteaddr}'"
+#: src/puppetlabs/pxp_dispatch_service.clj
+msgid "Shutting down dispatch service"
 msgstr ""
 
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "Illegal message type: ''{0}''"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "Illegal message target: ''{0}''"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
-msgid ""
-"Message '{messageid}' for '{destination}' didn''t pass pre-authorization "
-"validation: '{message}'"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
-msgid ""
-"Authorizing '{messageid}' for '{destination}' - '{allowed}': '{auth-message}'"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "Processing PCP message: '{rawmsg}'"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "Message not authenticated"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "Message not authorized"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "Multiple recipients no longer supported"
-msgstr ""
-
-#. default case
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "unexpected message validation outcome"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
-msgid ""
-"Failed to process '{messagetype}' '{messageid}' from '{commonname}' "
-"'{remoteaddress}': '{errortype}'"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "Error {0} handling message: {1}"
-msgstr ""
-
-#. TODO(richardc): this could use a different message_type to
-#. indicate an encoding error rather than a processing error
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "Could not decode message"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "Broker is not running"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "No client certificate, closing '{remoteaddress}'"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "No client certificate"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "client '{commonname}' connected from '{remoteaddress}'"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "Websocket error '{commonname}' '{remoteaddress}'"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
-msgid ""
-"client '{commonname}' disconnected from '{remoteaddress}' '{statuscode}' "
-"'{reason}'"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/core.clj
-msgid "vNext protocol endpoint not configured"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/service.clj
-msgid "Initializing broker service"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/service.clj
-msgid "Starting broker service"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/service.clj
-msgid "Broker service <'{brokername}'> started"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/service.clj
-msgid "Shutting down broker service"
-msgstr ""
-
-#: src/puppetlabs/pcp/broker/service.clj
-msgid "Broker service <'{brokername}'> stopped"
+#: src/puppetlabs/pxp_dispatch_service.clj
+msgid "Dispatch service stopped"
 msgstr ""
