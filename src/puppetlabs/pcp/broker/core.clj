@@ -76,9 +76,11 @@
   (let [database (:database broker)
         uri (:uri connection)
         change {:client uri :change 1}]
-    (swap! database #(-> %
-                         (update :inventory assoc uri connection)
-                         (update :updates conj change)))))
+    (swap! database (fn [db]
+                      (assert (not (contains? (:inventory db) uri)))
+                      (-> db
+                          (update :inventory assoc uri connection)
+                          (update :updates conj change))))))
 
 (s/defn remove-connection! :- shared/BrokerDatabase
   "Remove a Connection from ':inventory' and possibly ':subscriptions' and
